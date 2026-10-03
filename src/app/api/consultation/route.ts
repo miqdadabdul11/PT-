@@ -16,7 +16,7 @@ export async function POST(request: Request) {
 
     const timestamp = new Date().toLocaleString("id-ID", { timeZone: "Asia/Jakarta" });
 
-    // 1. Simpan sementara ke file CSV lokal (data/consultations.csv)
+    // 1. Simpan backup lokal CSV (data/consultations.csv)
     const csvDir = path.join(process.cwd(), "src", "data");
     const csvPath = path.join(csvDir, "consultations.csv");
 
@@ -24,13 +24,11 @@ export async function POST(request: Request) {
       fs.mkdirSync(csvDir, { recursive: true });
     }
 
-    // Jika file belum ada, buat header tabel
     if (!fs.existsSync(csvPath)) {
       const header = "Waktu,Nama,WhatsApp/Email,Instansi/Perusahaan,Topik Layanan,Detail Pesan\n";
       fs.writeFileSync(csvPath, header, "utf-8");
     }
 
-    // Format baris CSV (escape quote)
     const cleanName = `"${name.replace(/"/g, '""')}"`;
     const cleanContact = `"${contact.replace(/"/g, '""')}"`;
     const cleanOrg = `"${(organization || "-").replace(/"/g, '""')}"`;
@@ -40,11 +38,13 @@ export async function POST(request: Request) {
     const row = `${timestamp},${cleanName},${cleanContact},${cleanOrg},${cleanTopic},${cleanMessage}\n`;
     fs.appendFileSync(csvPath, row, "utf-8");
 
-    // 2. Jika ada Webhook Google Sheet (opsional via ENV)
+    // 2. Teruskan data ke Google Spreadsheet jika Webhook URL dikonfigurasi
     const webhookUrl = process.env.GOOGLE_SHEET_WEBHOOK_URL;
+    let sheetSuccess = false;
+
     if (webhookUrl) {
       try {
-        await fetch(webhookUrl, {
+        const sheetRes = await fetch(webhookUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -56,6 +56,10 @@ export async function POST(request: Request) {
             message,
           }),
         });
+
+        if (sheetRes.ok) {
+          sheetSuccess = true;
+        }
       } catch (err) {
         console.error("Gagal mengirim ke Google Sheet Webhook:", err);
       }
@@ -63,7 +67,8 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       success: true,
-      message: "Data konsultasi berhasil disimpan ke spreadsheet tabel.",
+      sheetSuccess,
+      message: "Data konsultasi berhasil diproses dan disimpan.",
       data: { timestamp, name, contact, organization, topic, message },
     });
   } catch (error) {
@@ -72,26 +77,5 @@ export async function POST(request: Request) {
       { success: false, error: "Gagal memproses data konsultasi." },
       { status: 500 }
     );
-  }
-}
-
-// Endpoint GET untuk mengunduh atau melihat file tabel CSV
-export async function GET() {
-  try {
-    const csvPath = path.join(process.cwd(), "src", "data", "consultations.csv");
-    if (!fs.existsSync(csvPath)) {
-      return new NextResponse("Waktu,Nama,WhatsApp/Email,Instansi/Perusahaan,Topik Layanan,Detail Pesan\n", {
-        headers: { "Content-Type": "text/csv; charset=utf-8" },
-      });
-    }
-    const content = fs.readFileSync(csvPath, "utf-8");
-    return new NextResponse(content, {
-      headers: {
-        "Content-Type": "text/csv; charset=utf-8",
-        "Content-Disposition": 'inline; filename="consultations.csv"',
-      },
-    });
-  } catch (error) {
-    return NextResponse.json({ error: "Gagal membaca file data." }, { status: 500 });
   }
 }
